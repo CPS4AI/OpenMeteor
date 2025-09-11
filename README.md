@@ -1,6 +1,6 @@
 # Meteor: Improved Secure 3-Party Neural Network Inference with Reducing Online Communication Costs
 
-A privacy-preserving framework for efficient 3-party protocols tailored for neural networks, the paper is avaiable [eprint/2023/100](https://eprint.iacr.org/2023/100). This work builds on [Falcon](https://snwagh.github.io).
+A privacy-preserving framework for efficient 3-party protocols tailored for neural networks, the paper is available [Link](https://dl.acm.org/doi/abs/10.1145/3543507.3583272). This work builds on [Falcon](https://snwagh.github.io).
 
 
 ### Table of Contents
@@ -65,3 +65,21 @@ To run the code, simply choose one of the following options:
 
 ---
 For questions, please create git issues; for eventual replies, you can also reach out to [19950512dy@gmail.com](19950512dy@gmail.com)
+
+## Citing
+```text
+@inproceedings{10.1145/3543507.3583272,
+author = {Dong, Ye and Xiaojun, Chen and Jing, Weizhan and Kaiyun, Li and Wang, Weiping},
+title = {Meteor: Improved Secure 3-Party Neural Network Inference with Reducing Online Communication Costs},
+year = {2023},
+isbn = {9781450394161},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3543507.3583272},
+doi = {10.1145/3543507.3583272},
+booktitle = {Proceedings of the ACM Web Conference 2023},
+pages = {2087–2098},
+location = {Austin, TX, USA},
+series = {WWW '23}
+}
+```
