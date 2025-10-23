@@ -64,7 +64,6 @@ To run the code, simply choose one of the following options:
 * Finally, the `makefile` (line 4-15) contains the descriptions of the arguments accepted by the executable.
 
 ---
-For questions, please create git issues; for eventual replies, you can also reach out to [19950512dy@gmail.com](19950512dy@gmail.com)
 
 ## Citing
 ```text
