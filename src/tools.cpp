@@ -8,13 +8,27 @@
 using namespace std;
 using namespace Eigen;
 
+#ifdef __APPLE__
+#define METEOR_SHA256_DIGEST_LENGTH CC_SHA256_DIGEST_LENGTH
+#define METEOR_SHA256_CTX CC_SHA256_CTX
+#define METEOR_SHA256_INIT CC_SHA256_Init
+#define METEOR_SHA256_UPDATE CC_SHA256_Update
+#define METEOR_SHA256_FINAL CC_SHA256_Final
+#else
+#define METEOR_SHA256_DIGEST_LENGTH SHA256_DIGEST_LENGTH
+#define METEOR_SHA256_CTX SHA256_CTX
+#define METEOR_SHA256_INIT SHA256_Init
+#define METEOR_SHA256_UPDATE SHA256_Update
+#define METEOR_SHA256_FINAL SHA256_Final
+#endif
+
 
 smallType additionModPrime[PRIME_NUMBER][PRIME_NUMBER];
 smallType subtractModPrime[PRIME_NUMBER][PRIME_NUMBER];
 smallType multiplicationModPrime[PRIME_NUMBER][PRIME_NUMBER];
 
 
-
+#ifdef METEOR_ENABLE_GF128
 /* Here are the global variables, precomputed once in order to save time*/
 //powers[x*deg+(i-1)]=x^i, i.e., POW(SETX(X),i). Notice the (i-1), due to POW(x,0) not saved (always 1...)
 __m128i* powers;
@@ -164,30 +178,31 @@ __m128i inverse(__m128i x)
 	}
 	return ans;
 }
+#endif
 
 string _sha256hash_(char *input, int length)
 {
-	unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, input, length);
-    SHA256_Final(hash, &sha256);
+	unsigned char hash[METEOR_SHA256_DIGEST_LENGTH];
+    METEOR_SHA256_CTX sha256;
+    METEOR_SHA256_INIT(&sha256);
+    METEOR_SHA256_UPDATE(&sha256, input, length);
+    METEOR_SHA256_FINAL(hash, &sha256);
     string output;
-    output.resize(SHA256_DIGEST_LENGTH);
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+    output.resize(METEOR_SHA256_DIGEST_LENGTH);
+    for (int i = 0; i < METEOR_SHA256_DIGEST_LENGTH; i++)
     	output[i] = hash[i];
     return output;
 }
 
 string sha256hash(char *input, int length)
 {
-	unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, input, length);
-    SHA256_Final(hash, &sha256);
+	unsigned char hash[METEOR_SHA256_DIGEST_LENGTH];
+    METEOR_SHA256_CTX sha256;
+    METEOR_SHA256_INIT(&sha256);
+    METEOR_SHA256_UPDATE(&sha256, input, length);
+    METEOR_SHA256_FINAL(hash, &sha256);
     char outputBuffer[65];
-    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+    for(int i = 0; i < METEOR_SHA256_DIGEST_LENGTH; i++)
     {
         sprintf(outputBuffer + (i * 2), "%02x", hash[i]);
     }
@@ -201,6 +216,7 @@ void printError(string error)
 	exit(-1);
 }
 
+#ifdef METEOR_ENABLE_GF128
 string __m128i_toHex(__m128i var)
 {
 	static char const alphabet[] = "0123456789abcdef";
@@ -306,6 +322,7 @@ void print128_num(__m128i var)
 		val[0], val[1], val[2], val[3], val[4], val[5],
 		val[6], val[7]);
 }
+#endif
 
 
 void log_print(string str)

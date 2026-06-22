@@ -21,22 +21,35 @@ int main(int argc, char** argv)
 /****************************** PREPROCESSING ******************************/ 
 	parseInputs(argc, argv);
 	NeuralNetConfig* config = new NeuralNetConfig(NUM_ITERATIONS);
-	string network, dataset, security;
+	string network, dataset, runMode, unitTest;
 	bool PRELOADING = true;
 
-/****************************** SELECT NETWORK ******************************/ 
+/****************************** SELECT NETWORK ******************************/
+	//Run mode {unit, inference, preloaded, train}
 	//Network {SecureML, Sarda, MiniONN, LeNet, AlexNet, and VGG16}
 	//Dataset {MNIST, CIFAR10, and ImageNet}
-	//Security {Semi-honest or Malicious}
-	if (argc == 9)
-	{network = argv[6]; dataset = argv[7]; security = argv[8];}
+	runMode = "unit";
+	unitTest = "MeteorRELU";
+	if (argc == 8)
+	{network = argv[6]; dataset = argv[7];}
+	else if (argc == 9)
+	{runMode = argv[6]; network = argv[7]; dataset = argv[8];}
+	else if (argc == 10)
+	{runMode = argv[6]; network = argv[7]; dataset = argv[8]; unitTest = argv[9];}
 	else
 	{
 		network = "SecureML";
 		dataset = "MNIST";
-		security = "Semi-honest";
 	}
-	selectNetwork(network, dataset, security, config);
+	if (runMode.compare("unit") != 0 and
+		runMode.compare("inference") != 0 and
+		runMode.compare("preloaded") != 0 and
+		runMode.compare("train") != 0)
+	{
+		cout << "Run mode must be unit, inference, preloaded, or train" << endl;
+		return -1;
+	}
+	selectNetwork(network, dataset, config);
 	config->checkNetwork();
 	NeuralNetwork* net = new NeuralNetwork(config);
 
@@ -50,42 +63,36 @@ int main(int argc, char** argv)
 	cout << "connected success" << endl;
 
 /****************************** RUN NETWORK/UNIT TESTS ******************************/ 
-	//Run these if you want a preloaded network to be tested
-	//assert(NUM_ITERATION == 1 and "check if readMiniBatch is false in test(net)")
-	//First argument {SecureML, Sarda, MiniONN, or LeNet}
-	// network += " preloaded"; PRELOADING = true;
-	// preload_network(PRELOADING, network, net);
-
 	start_m();
-	//start_communication();
-	//start_time();
-	
-	//Run unit tests in two modes: 
-	//	1. Debug {Mat-Mul, DotProd, PC, Wrap, ReLUPrime, ReLU, Division, BN, SSBits, SS, and Maxpool}
-	//	2. Test {Mat-Mul1, Mat-Mul2, Mat-Mul3 (and similarly) Conv*, ReLU*, ReLUPrime*, and Maxpool*} where * = {1,2,3}
-	//runTest("Debug", "Division", network);
-	runTest("Test", "MeteorRELU", network);
-
-	// Run forward/backward for single layers
-	//  1. what {F, D, U}
-	// 	2. l {0,1,....NUM_LAYERS-1}
-	// size_t l = 0;
-	// string what = "F";
-	// runOnly(net, l, what, network);
-
-	//Run training
-	//network += " train";
-	//train(net);
-
-	//Run inference (possibly with preloading a network);
-	//network += " test";
-	//test(PRELOADING, network, net);
+	if (runMode.compare("unit") == 0)
+	{
+		runTest("Test", unitTest, network);
+	}
+	else if (runMode.compare("inference") == 0)
+	{
+		PRELOADING = false;
+		network += " test";
+		test(PRELOADING, network, net);
+	}
+	else if (runMode.compare("preloaded") == 0)
+	{
+		// Supported for preloaded MNIST networks generated with MINI_BATCH_SIZE == 128.
+		PRELOADING = true;
+		network += " preloaded";
+		preload_network(PRELOADING, network, net);
+		test(PRELOADING, network, net);
+	}
+	else if (runMode.compare("train") == 0)
+	{
+		network += " train";
+		train(net);
+	}
 
 	end_m(network);
-	cout << "----------------------------------------------" << endl;  	
-	cout << "Run details: " << NUM_OF_PARTIES << "PC (P" << partyNum 
-		 << "), " << NUM_ITERATIONS << " iterations, batch size " << MINI_BATCH_SIZE << endl 
-		 << "Running " << security << " " << network << " on " << dataset << " dataset" << endl;
+	cout << "----------------------------------------------" << endl;
+	cout << "Run details: " << NUM_OF_PARTIES << "PC (P" << partyNum
+		 << "), " << NUM_ITERATIONS << " iterations, batch size " << MINI_BATCH_SIZE << endl
+		 << "Running semi-honest " << runMode << " mode for " << network << " on " << dataset << " dataset" << endl;
 	cout << "----------------------------------------------" << endl << endl;  
 
 	printNetwork(net);

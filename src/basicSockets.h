@@ -10,12 +10,17 @@
 //#include <stropts.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
+#ifdef __linux__
 #include <linux/netdevice.h>
+#else
+#include <net/if.h>
+#endif
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <string>
-#include "secCompMultiParty.h"
+#include <array>
+#include "globals.h"
 using namespace std;
 
 #ifndef BMRNET_H_
@@ -47,15 +52,30 @@ private:
 	uint64_t bytesReceived = 0;
 	uint64_t numberOfSends = 0;
 	uint64_t numberOfRecvs = 0;	
+	std::array<uint64_t, NUM_MEASUREMENT_PHASES> phaseBytesSent;
+	std::array<uint64_t, NUM_MEASUREMENT_PHASES> phaseBytesReceived;
+	std::array<uint64_t, NUM_MEASUREMENT_PHASES> phaseSends;
+	std::array<uint64_t, NUM_MEASUREMENT_PHASES> phaseRecvs;
+	MeasurementPhase phase = ONLINE_PHASE;
 	bool measurement = false;	
 
 public: 
+	CommunicationObject()
+	{
+		reset();
+	}
+
 	void reset()
 	{
 		bytesSent = 0;
 		bytesReceived = 0;
 		numberOfSends = 0;
 		numberOfRecvs = 0;
+		phaseBytesSent.fill(0);
+		phaseBytesReceived.fill(0);
+		phaseSends.fill(0);
+		phaseRecvs.fill(0);
+		phase = ONLINE_PHASE;
 		measurement = false;
 	}
 
@@ -64,12 +84,19 @@ public:
 		measurement = a;
 	}
 
+	void setPhase(MeasurementPhase p)
+	{
+		phase = p;
+	}
+
 	void incrementSent(int size)
 	{
 		if (measurement)
 		{
 			bytesSent += size;
 			numberOfSends++;
+			phaseBytesSent[phase] += size;
+			phaseSends[phase]++;
 		}
 	}
 
@@ -79,6 +106,8 @@ public:
 		{
 			bytesReceived += size;
 			numberOfRecvs++;
+			phaseBytesReceived[phase] += size;
+			phaseRecvs[phase]++;
 		}
 	}
 
@@ -86,6 +115,10 @@ public:
 	uint64_t getRecv() {return bytesReceived;}
 	uint64_t getRoundsSent() {return numberOfSends;}
 	uint64_t getRoundsRecv() {return numberOfRecvs;}
+	uint64_t getSent(MeasurementPhase p) {return phaseBytesSent[p];}
+	uint64_t getRecv(MeasurementPhase p) {return phaseBytesReceived[p];}
+	uint64_t getRoundsSent(MeasurementPhase p) {return phaseSends[p];}
+	uint64_t getRoundsRecv(MeasurementPhase p) {return phaseRecvs[p];}
 	bool getMeasurement() {return measurement;}
 };
 

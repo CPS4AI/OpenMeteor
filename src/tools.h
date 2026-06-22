@@ -3,19 +3,27 @@
 #define TOOLS_H
 #pragma once
 
-#include <stdio.h> 
+#include <stdio.h>
 #include <iostream>
+#ifdef METEOR_ENABLE_GF128
 #include "Config.h"
 #include "../util/TedKrovetzAesNiWrapperC.h"
 #include <wmmintrin.h>
 #include <emmintrin.h>
 #include <smmintrin.h>
+#endif
 #include <vector>
 #include <time.h>
+#ifdef METEOR_ENABLE_GF128
 #include "secCompMultiParty.h"
 #include "main_gf_funcs.h"
+#endif
 #include <string>
+#ifdef __APPLE__
+#include <CommonCrypto/CommonDigest.h>
+#else
 #include <openssl/sha.h>
+#endif
 #include <math.h>
 #include <sstream>
 #include "AESObject.h"
@@ -33,6 +41,7 @@ extern smallType multiplicationModPrime[PRIME_NUMBER][PRIME_NUMBER];
 
 
 
+#ifdef METEOR_ENABLE_GF128
 #if MULTIPLICATION_TYPE==0
 #define MUL(x,y) gfmul(x,y)
 #define MULT(x,y,ans) gfmul(x,y,&ans)
@@ -156,6 +165,7 @@ string convertCharsToString(char *input, int size);
 void print(__m128i* arr, int size);
 
 void print128_num(__m128i var);
+#endif
 
 void log_print(string str);
 void error(string str);

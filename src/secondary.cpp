@@ -1,6 +1,8 @@
 
-#include "connect.h" 
+#include "connect.h"
 #include "secondary.h"
+#include <algorithm>
+#include <limits>
 
 extern CommunicationObject commObject;
 extern int partyNum;
@@ -17,6 +19,13 @@ bool alreadyMeasuringTime = false;
 int roundComplexitySend = 0;
 int roundComplexityRecv = 0;
 bool alreadyMeasuringRounds = false;
+std::array<double, NUM_MEASUREMENT_PHASES> phaseWallTime;
+std::array<double, NUM_MEASUREMENT_PHASES> phaseCpuTime;
+struct timespec phaseStartWall;
+clock_t phaseStartCpu;
+MeasurementPhase currentMeasurementPhase = ONLINE_PHASE;
+bool phaseMeasurementActive = false;
+int preprocessingMeasurementDepth = 0;
 
 //For faster modular operations
 extern smallType additionModPrime[PRIME_NUMBER][PRIME_NUMBER];
@@ -37,15 +46,66 @@ bool WITH_NORMALIZATION;
 bool LARGE_NETWORK;
 size_t TRAINING_DATA_SIZE;
 size_t TEST_DATA_SIZE;
-string SECURITY_TYPE;
 
 extern void print_linear(myType var, string type);
 extern void funcReconstruct(const RSSVectorMyType &a, vector<myType> &b, size_t size, string str, bool print);
 
+namespace
+{
+	int64_t openSigned(myType value)
+	{
+		if (((value >> (BIT_SIZE - 1)) & 1) == 0)
+			return static_cast<int64_t>(value);
+		if (value == LARGEST_NEG)
+			return std::numeric_limits<int64_t>::min();
+		return -static_cast<int64_t>((~value) + 1);
+	}
+
+	double wallTimeNow()
+	{
+		struct timespec now;
+		clock_gettime(CLOCK_REALTIME, &now);
+		return static_cast<double>(now.tv_sec) + static_cast<double>(now.tv_nsec) / NANOSECONDS_PER_SEC;
+	}
+
+	double wallTimeValue(const struct timespec &value)
+	{
+		return static_cast<double>(value.tv_sec) + static_cast<double>(value.tv_nsec) / NANOSECONDS_PER_SEC;
+	}
+
+	const char* phaseName(MeasurementPhase phase)
+	{
+		return phase == PREPROCESSING_PHASE ? "Preprocessing" : "Online";
+	}
+
+	void accumulateCostPhase()
+	{
+		if (!phaseMeasurementActive)
+			return;
+
+		double nowWall = wallTimeNow();
+		clock_t nowCpu = clock();
+		phaseWallTime[currentMeasurementPhase] += nowWall - wallTimeValue(phaseStartWall);
+		phaseCpuTime[currentMeasurementPhase] += static_cast<double>(nowCpu - phaseStartCpu) / CLOCKS_PER_SEC;
+		clock_gettime(CLOCK_REALTIME, &phaseStartWall);
+		phaseStartCpu = nowCpu;
+	}
+
+	void switchCostPhase(MeasurementPhase phase)
+	{
+		if (!phaseMeasurementActive || currentMeasurementPhase == phase)
+			return;
+
+		accumulateCostPhase();
+		currentMeasurementPhase = phase;
+		commObject.setPhase(phase);
+	}
+}
+
 /******************* Main train and test functions *******************/
 void parseInputs(int argc, char* argv[])
 {	
-	if (argc < 6) 
+	if (argc != 6 and argc != 8 and argc != 9 and argc != 10)
 		print_usage(argv[0]);
 
 	partyNum = atoi(argv[1]);
@@ -91,24 +151,40 @@ void test(bool PRELOADING, string network, NeuralNetwork* net)
 			readMiniBatch(net, "TESTING");
 
 		net->forward();
-		// net->predict(maxIndex);
-		// net->getAccuracy(maxIndex, counter);
+		net->predict(maxIndex);
+		if (!PRELOADING)
+			net->getAccuracy(maxIndex, counter);
 	}
 	//print_vector((*(net->layers[NUM_LAYERS-1])->getActivation()), "FLOAT", "MPC Output over uint32_t:", 1280);
 
 	// Write output to file
 	if (PRELOADING)
 	{
-		ofstream data_file;
-		data_file.open("files/preload/"+which_network(network)+"/"+which_network(network)+".txt");
-		
-		vector<myType> b(MINI_BATCH_SIZE * LAST_LAYER_SIZE);
-		//funcReconstruct((*(net->layers[NUM_LAYERS-1])->getActivation()), b, MINI_BATCH_SIZE * LAST_LAYER_SIZE, "anything", false);
-		for (int i = 0; i < MINI_BATCH_SIZE; ++i)
+		MEVectorType &activations = *(net->layers[NUM_LAYERS-1]->getActivation());
+		RSSVectorMyType activationMask(MINI_BATCH_SIZE * LAST_LAYER_SIZE);
+		vector<myType> maskPlain(MINI_BATCH_SIZE * LAST_LAYER_SIZE), opened(MINI_BATCH_SIZE * LAST_LAYER_SIZE);
+		for (size_t i = 0; i < MINI_BATCH_SIZE * LAST_LAYER_SIZE; ++i)
+			activationMask[i] = activations[i].second;
+		funcReconstruct(activationMask, maskPlain, MINI_BATCH_SIZE * LAST_LAYER_SIZE, "preloaded inference output mask", false);
+		for (size_t i = 0; i < MINI_BATCH_SIZE * LAST_LAYER_SIZE; ++i)
+			opened[i] = activations[i].first + maskPlain[i];
+
+		if (partyNum == PARTY_A)
 		{
-			for (int j = 0; j < LAST_LAYER_SIZE; ++j)
-				data_file << b[i*(LAST_LAYER_SIZE) + j] << " ";
-			data_file << endl;
+			string default_path = "files/preload/"+which_network(network)+"/";
+			ofstream data_file(default_path+which_network(network)+".txt");
+			ofstream prediction_file(default_path+which_network(network)+"_predictions.txt");
+			for (int i = 0; i < MINI_BATCH_SIZE; ++i)
+			{
+				for (int j = 0; j < LAST_LAYER_SIZE; ++j)
+				{
+					if (j > 0)
+						data_file << " ";
+					data_file << openSigned(opened[i*LAST_LAYER_SIZE + j]);
+				}
+				data_file << endl;
+				prediction_file << static_cast<size_t>(maxIndex[i].first) << endl;
+			}
 		}
 	}
 }
@@ -132,7 +208,7 @@ extern size_t nextParty(size_t party);
 void preload_network(bool PRELOADING, string network, NeuralNetwork* net)
 {
 	log_print("preload_network");
-	assert((PRELOADING) and (NUM_ITERATIONS == 1) and (MINI_BATCH_SIZE == 128) && "Preloading conditions fail");
+	assert((PRELOADING) and (NUM_ITERATIONS == 1) and (MINI_BATCH_SIZE <= 128) && "Preloading conditions fail");
 
 	float temp_next = 0, temp_prev = 0;
 	string default_path = "files/preload/"+which_network(network)+"/";
@@ -939,11 +1015,8 @@ void printNetwork(NeuralNetwork* net)
 }
 
 
-void selectNetwork(string network, string dataset, string security, NeuralNetConfig* config)
+void selectNetwork(string network, string dataset, NeuralNetConfig* config)
 {
-	assert(((security.compare("Semi-honest") == 0) or (security.compare("Malicious") == 0)) && 
-			"Only Semi-honest or Malicious security allowed");
-	SECURITY_TYPE = security;
 	loadData(network, dataset);
 
 	if (network.compare("SecureML") == 0)
@@ -1353,14 +1426,75 @@ void start_m()
 	// cout << endl;
 	start_time();
 	start_communication();
+	start_cost_breakdown();
 }
 
 void end_m(string str)
 {
+	end_cost_breakdown(str);
 	end_time(str);
 	pause_communication();
+	print_cost_breakdown(str);
+	aggregateCostBreakdown(str);
 	aggregateCommunication();
 	end_communication(str);
+}
+
+void start_cost_breakdown()
+{
+	phaseWallTime.fill(0.0);
+	phaseCpuTime.fill(0.0);
+	currentMeasurementPhase = ONLINE_PHASE;
+	preprocessingMeasurementDepth = 0;
+	phaseMeasurementActive = true;
+	clock_gettime(CLOCK_REALTIME, &phaseStartWall);
+	phaseStartCpu = clock();
+	commObject.setPhase(ONLINE_PHASE);
+}
+
+void end_cost_breakdown(string str)
+{
+	accumulateCostPhase();
+	phaseMeasurementActive = false;
+}
+
+void print_cost_breakdown(string str)
+{
+	cout << "----------------------------------------------" << endl;
+	cout << "Local cost breakdown for " << str << ", P" << partyNum << ":" << endl;
+	MeasurementPhase displayOrder[NUM_MEASUREMENT_PHASES] = {PREPROCESSING_PHASE, ONLINE_PHASE};
+	for (int index = 0; index < NUM_MEASUREMENT_PHASES; ++index)
+	{
+		MeasurementPhase measurementPhase = displayOrder[index];
+		cout << phaseName(measurementPhase) << " computation: "
+			 << phaseWallTime[measurementPhase] << " sec wall, "
+			 << phaseCpuTime[measurementPhase] << " sec CPU" << endl;
+	}
+	cout << "----------------------------------------------" << endl;
+}
+
+void push_preprocessing_cost()
+{
+	if (!phaseMeasurementActive)
+		return;
+
+	if (preprocessingMeasurementDepth++ == 0)
+		switchCostPhase(PREPROCESSING_PHASE);
+}
+
+void pop_preprocessing_cost()
+{
+	if (!phaseMeasurementActive)
+		return;
+
+	if (preprocessingMeasurementDepth <= 0)
+	{
+		cout << "Preprocessing cost scope underflow" << endl;
+		exit(-1);
+	}
+
+	if (--preprocessingMeasurementDepth == 0)
+		switchCostPhase(ONLINE_PHASE);
 }
 
 void start_time()
@@ -1423,22 +1557,31 @@ void end_rounds(string str)
 
 void aggregateCommunication()
 {
-	vector<uint64_t> vec(4, 0), temp(4, 0);
+	vector<uint64_t> vec(12, 0), temp(12, 0);
 	vec[0] = commObject.getSent();
 	vec[1] = commObject.getRecv();
 	vec[2] = commObject.getRoundsSent();
 	vec[3] = commObject.getRoundsRecv();
+	for (int phase = 0; phase < NUM_MEASUREMENT_PHASES; ++phase)
+	{
+		MeasurementPhase measurementPhase = static_cast<MeasurementPhase>(phase);
+		size_t offset = 4 + phase*4;
+		vec[offset + 0] = commObject.getSent(measurementPhase);
+		vec[offset + 1] = commObject.getRecv(measurementPhase);
+		vec[offset + 2] = commObject.getRoundsSent(measurementPhase);
+		vec[offset + 3] = commObject.getRoundsRecv(measurementPhase);
+	}
 
 	if (partyNum == PARTY_B or partyNum == PARTY_C)
-		sendVector<uint64_t>(vec, PARTY_A, 4);
+		sendVector<uint64_t>(vec, PARTY_A, vec.size());
 
 	if (partyNum == PARTY_A)
 	{
-		receiveVector<uint64_t>(temp, PARTY_B, 4);
-		for (size_t i = 0; i < 4; ++i)
+		receiveVector<uint64_t>(temp, PARTY_B, temp.size());
+		for (size_t i = 0; i < vec.size(); ++i)
 			vec[i] = temp[i] + vec[i];
-		receiveVector<uint64_t>(temp, PARTY_C, 4);
-		for (size_t i = 0; i < 4; ++i)
+		receiveVector<uint64_t>(temp, PARTY_C, temp.size());
+		for (size_t i = 0; i < vec.size(); ++i)
 			vec[i] = temp[i] + vec[i];
 	}
 
@@ -1447,6 +1590,57 @@ void aggregateCommunication()
 		cout << "----------------------------------------------" << endl;
 		cout << "Total communication: " << (float)vec[0]/1000000 << "MB (sent) and " << (float)vec[1]/1000000 << "MB (recv)\n";
 		cout << "Total calls: " << vec[2] << " (sends) and " << vec[3] << " (recvs)" << endl;
+		MeasurementPhase displayOrder[NUM_MEASUREMENT_PHASES] = {PREPROCESSING_PHASE, ONLINE_PHASE};
+		for (int index = 0; index < NUM_MEASUREMENT_PHASES; ++index)
+		{
+			MeasurementPhase measurementPhase = displayOrder[index];
+			size_t offset = 4 + measurementPhase*4;
+			cout << phaseName(measurementPhase) << " communication: "
+				 << (float)vec[offset + 0]/1000000 << "MB (sent) and "
+				 << (float)vec[offset + 1]/1000000 << "MB (recv), "
+				 << vec[offset + 2] << " sends and "
+				 << vec[offset + 3] << " recvs" << endl;
+		}
+		cout << "----------------------------------------------" << endl;
+	}
+}
+
+void aggregateCostBreakdown(string str)
+{
+	vector<double> vec(4, 0.0), temp(4, 0.0);
+	vec[0] = phaseWallTime[PREPROCESSING_PHASE];
+	vec[1] = phaseWallTime[ONLINE_PHASE];
+	vec[2] = phaseCpuTime[PREPROCESSING_PHASE];
+	vec[3] = phaseCpuTime[ONLINE_PHASE];
+
+	if (partyNum == PARTY_B or partyNum == PARTY_C)
+		sendVector<double>(vec, PARTY_A, vec.size());
+
+	if (partyNum == PARTY_A)
+	{
+		double maxPrepWall = vec[0];
+		double maxOnlineWall = vec[1];
+		double totalPrepCpu = vec[2];
+		double totalOnlineCpu = vec[3];
+
+		receiveVector<double>(temp, PARTY_B, temp.size());
+		maxPrepWall = std::max(maxPrepWall, temp[0]);
+		maxOnlineWall = std::max(maxOnlineWall, temp[1]);
+		totalPrepCpu += temp[2];
+		totalOnlineCpu += temp[3];
+
+		receiveVector<double>(temp, PARTY_C, temp.size());
+		maxPrepWall = std::max(maxPrepWall, temp[0]);
+		maxOnlineWall = std::max(maxOnlineWall, temp[1]);
+		totalPrepCpu += temp[2];
+		totalOnlineCpu += temp[3];
+
+		cout << "----------------------------------------------" << endl;
+		cout << "Aggregated cost breakdown for " << str << ":" << endl;
+		cout << "Preprocessing computation: " << maxPrepWall << " sec max wall, "
+			 << totalPrepCpu << " sec total CPU" << endl;
+		cout << "Online computation: " << maxOnlineWall << " sec max wall, "
+			 << totalOnlineCpu << " sec total CPU" << endl;
 		cout << "----------------------------------------------" << endl;
 	}
 }
@@ -1454,7 +1648,9 @@ void aggregateCommunication()
 
 void print_usage (const char * bin) 
 {
-    cout << "Usage: ./" << bin << " PARTY_NUM IP_ADDR_FILE AES_SEED_INDEP AES_SEED_NEXT AES_SEED_PREV" << endl;
+    cout << "Usage: ./" << bin << " PARTY_NUM IP_ADDR_FILE AES_SEED_INDEP AES_SEED_NEXT AES_SEED_PREV [NETWORK DATASET]" << endl;
+    cout << "   or: ./" << bin << " PARTY_NUM IP_ADDR_FILE AES_SEED_INDEP AES_SEED_NEXT AES_SEED_PREV [RUN_MODE NETWORK DATASET]" << endl;
+    cout << "   or: ./" << bin << " PARTY_NUM IP_ADDR_FILE AES_SEED_INDEP AES_SEED_NEXT AES_SEED_PREV [RUN_MODE NETWORK DATASET UNIT_TEST]" << endl;
     cout << endl;
     cout << "Required Arguments:\n";
     cout << "PARTY_NUM			Party Identifier (0,1, or 2)\n";
@@ -1462,6 +1658,14 @@ void print_usage (const char * bin)
     cout << "AES_SEED_INDEP		\tAES seed file independent\n";
     cout << "AES_SEED_NEXT		\t \tAES seed file next\n";
     cout << "AES_SEED_PREV		\t \tAES seed file previous\n";
+    cout << endl;
+    cout << "Optional Arguments:\n";
+    cout << "RUN_MODE		\tunit, inference, preloaded, or train\n";
+    cout << "NETWORK			\tSecureML, Sarda, MiniONN, LeNet, AlexNet, or VGG16\n";
+    cout << "DATASET			\tMNIST, CIFAR10, or ImageNet\n";
+    cout << "UNIT_TEST		\tMeteorRELU, MeteorRELUPrime, MeteorPC, BitProduct, MeteorDotProduct, MeteorTruncation, MeteorTruncatingDotProduct, MeteorTruncatingMatMul, MeteorSmallDotProduct, MeteorMatMul, MeteorNeighborMultiply, ThunderNMult, MeteorMaxpool, Conv, or BN\n";
+    cout << endl;
+    cout << "Security model: semi-honest 3PC only\n";
     cout << endl;
     cout << "Report bugs to swagh@princeton.edu" << endl;
     exit(-1);

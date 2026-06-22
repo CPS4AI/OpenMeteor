@@ -3,7 +3,6 @@
 #include "connect.h"
 #include <thread>
 #include <mutex> 
-#include "secCompMultiParty.h"
 #include <vector>
 using namespace std;
 
@@ -93,16 +92,27 @@ void initializeCommunication(char* filename, int p)
 	
 	addrs = new string[NUM_OF_PARTIES];
 	int * ports = new int[NUM_OF_PARTIES * 2];
+	int portBase = 32000;
+	char *portBaseEnv = getenv("METEOR_PORT_BASE");
+	if (portBaseEnv != NULL)
+		portBase = atoi(portBaseEnv);
 
 
-	for (int i = 0; i < NUM_OF_PARTIES; i++)
+	for (int i = 0; i < NUM_OF_PARTIES;)
 	{
-		fgets(buff, STRING_BUFFER_SIZE, f);
-		sscanf(buff, "%s\n", ip);
+		if (fgets(buff, STRING_BUFFER_SIZE, f) == NULL)
+		{
+			cout << "IP file must contain " << NUM_OF_PARTIES << " non-empty addresses" << endl;
+			exit(-1);
+		}
+		if (sscanf(buff, "%s\n", ip) != 1)
+			continue;
+
 		addrs[i] = string(ip);
 		//cout << addrs[i] << endl;
-		ports[2 * i] = 32000 + i*NUM_OF_PARTIES + partyNum;
-		ports[2 * i + 1] = 32000 + partyNum*NUM_OF_PARTIES + i;
+		ports[2 * i] = portBase + i*NUM_OF_PARTIES + partyNum;
+		ports[2 * i + 1] = portBase + partyNum*NUM_OF_PARTIES + i;
+		i++;
 	}
 
 	fclose(f);

@@ -21,12 +21,18 @@ void Meteor_funcMatMul(const MEVectorType &a, const MEVectorType &b, MEVectorTyp
 				 	size_t transpose_a, size_t transpose_b, size_t truncation);
 
 void Meteor_funcDotProduct(const MEVectorType &a, const MEVectorType &b, MEVectorType &c, size_t size, bool truncation, size_t precision);
+void Meteor_funcTruncate(const MEVectorType &a, MEVectorType &b, size_t size, size_t power);
 
 void Meteor_funcDotProduct(const MEVectorSmallType &a, const MEVectorSmallType &b, MEVectorSmallType &c, size_t size);
 
 void Meteor_funcDotProductBits(const MEVectorSmallType &a, const MEVectorSmallType &b, MEVectorSmallType &c, size_t size);
+void Meteor_funcBit2A(const MEVectorSmallType &bits, MEVectorType &arith, size_t size);
 void Meteor_funcMultiplyNeighbors(const MEVectorSmallType &c_1, MEVectorSmallType &c_2, size_t size);
+void Meteor_funcCrunchMultiply(const MEVectorSmallType &c, const MEVectorSmallType &gamma, vector<smallType> &betaPrime, size_t size);
 void Meteor_funcCrunchMultiply(const MEVectorSmallType &c, vector<smallType> &betaPrime, size_t size);
+void Meteor_funcSecMSB(const MEVectorType &x, const MEVectorSmallType &lambdaBits, const MEVectorSmallType &lambdaMSB, const MEVectorSmallType &sBits,
+					   const MEVectorSmallType &betaBit, const MEVectorSmallType &betaPrime,
+					   const MEVectorSmallType &gamma, MEVectorSmallType &msb, size_t size);
 
 void Meteor_funcPrivateCompare(const MEVectorSmallType &share_m, const vector<myType> &r, const MEVectorSmallType &beta, vector<smallType> &betaPrime, size_t size);
 
@@ -43,8 +49,14 @@ void aggregateCommunication();
 //Test
 void testMeteorMatMul(size_t rows, size_t common_dim, size_t columns, size_t iter);
 void testMeteorDotProduct(size_t size, size_t iter);
+void testMeteorTruncation(size_t size, size_t iter);
+void testMeteorTruncatingDotProduct(size_t size, size_t iter);
+void testMeteorTruncatingMatMul(size_t rows, size_t common_dim, size_t columns, size_t iter);
 void testMeteorSmallDotProduct(size_t size, size_t iter);
 void testMeteorBitProduct(size_t size, size_t iter);
+void testMeteorBit2A(size_t size, size_t iter);
+void testPreMSBObjects(size_t size, size_t iter);
+void testMeteorSecMSB(size_t size, size_t iter);
 void testMeteorNeighborMultly(size_t size, size_t iter);
 void testMeteorfuncCrunchMultiply(size_t size, size_t iter);
 void testMeteorPC(size_t size, size_t iter);
@@ -54,5 +66,3 @@ void testMeteorMaxpool(size_t ih, size_t iw, size_t Din, size_t f, size_t S, siz
 void testMeteorConvolution(size_t iw, size_t ih, size_t Din, size_t Dout, size_t f, size_t S, size_t P, size_t B, size_t iter);
 void test_MeteorBatchNorm(size_t numBatches, size_t inputSize, size_t iter);
 void testThunderNMult(size_t size, size_t N,  size_t iter);
-
-

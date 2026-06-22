@@ -12,7 +12,6 @@
 # 					  Refer to Makefile Parameters section below for details.
 # arg[6]: Which predefined network
 # arg[7]: What dataset to use
-# arg[8]: Which adversarial model
 
 
 ############################## Makefile parameters ######################################
@@ -20,28 +19,71 @@
 # OPEN_SSL_LOC := /data/swagh/conda
 # RUN_TYPE {localhost, LAN or WAN} 
 RUN_TYPE := localhost
+# RUN_MODE {unit, inference, preloaded, train}
+RUN_MODE := unit
+# UNIT_TEST {MeteorRELU, MeteorRELUPrime, MeteorPC, BitProduct, MeteorDotProduct, MeteorSmallDotProduct, MeteorMatMul, MeteorNeighborMultiply, ThunderNMult, MeteorMaxpool, Conv, BN}
+UNIT_TEST := MeteorRELU
 # NETWORK {SecureML, Sarda, MiniONN, LeNet, AlexNet, and VGG16}
 NETWORK := AlexNet
 # Dataset {MNIST, CIFAR10, and ImageNet}
 DATASET	:= CIFAR10
-# Security {Semi-honest or Malicious} 
-SECURITY:= Semi-honest # Malicious
+# TARGET_ARCH {native, arm64, x86_64}; native uses the host architecture.
+TARGET_ARCH ?= native
+# Base port for localhost tests. Override when stale local test processes occupy 32000-32008.
+PORT_BASE ?= 32000
 #########################################################################################
 
 
 
 
 #########################################################################################
+UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+
+BUILD_ARCH := $(TARGET_ARCH)
+ifeq ($(TARGET_ARCH),native)
+BUILD_ARCH := $(UNAME_M)
+endif
+
+ARCH_FLAGS :=
+ifeq ($(TARGET_ARCH),x86_64)
+ARCH_FLAGS := -arch x86_64
+endif
+ifeq ($(TARGET_ARCH),arm64)
+ARCH_FLAGS := -arch arm64
+endif
+
+USE_AESNI := 0
+ifeq ($(BUILD_ARCH),x86_64)
+USE_AESNI := 1
+endif
+ifeq ($(BUILD_ARCH),amd64)
+USE_AESNI := 1
+endif
+
 CXX=g++
 SRC_CPP_FILES     := $(wildcard src/*.cpp)
 OBJ_CPP_FILES     := $(wildcard util/*.cpp)
+ifeq ($(USE_AESNI),0)
+SRC_CPP_FILES     := $(filter-out src/secCompMultiParty.cpp,$(SRC_CPP_FILES))
+OBJ_CPP_FILES     := $(filter-out util/TedKrovetzAesNiWrapperC.cpp util/main_gf_funcs.cpp util/cbitvector.cpp,$(OBJ_CPP_FILES))
+endif
 OBJ_FILES    	  := $(patsubst src/%.cpp, src/%.o,$(SRC_CPP_FILES))
 OBJ_FILES    	  += $(patsubst util/%.cpp, util/%.o,$(OBJ_CPP_FILES))
 HEADER_FILES       = $(wildcard src/*.h)
 
 # FLAGS := -static -g -O0 -w -std=c++11 -pthread -msse4.1 -maes -msse2 -mpclmul -fpermissive -fpic
-FLAGS := -O3 -w -std=c++11 -pthread -msse4.1 -maes -msse2 -mpclmul -fpic
+FLAGS := $(ARCH_FLAGS) -O3 -w -std=c++11 -pthread -fpic
+ifeq ($(USE_AESNI),1)
+FLAGS += -DMETEOR_AESNI_BACKEND -DMETEOR_ENABLE_GF128 -msse4.1 -maes -msse2 -mpclmul
+else
+FLAGS += -DMETEOR_PORTABLE_BACKEND
+endif
+ifeq ($(UNAME_S),Darwin)
+LIBS :=
+else
 LIBS := -lcrypto -lssl
+endif
 OBJ_INCLUDES := -I 'lib_eigen/' -I 'util/Miracl/' -I 'util/' -I '$(OPEN_SSL_LOC)/include/'
 BMR_INCLUDES := -L./ -L$(OPEN_SSL_LOC)/lib/ $(OBJ_INCLUDES) 
 
@@ -49,10 +91,16 @@ BMR_INCLUDES := -L./ -L$(OPEN_SSL_LOC)/lib/ $(OBJ_INCLUDES)
 help: ## Run make or make help to see list of options
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
+backend: ## Print selected build backend
+	@echo "TARGET_ARCH=$(TARGET_ARCH)"
+	@echo "BUILD_ARCH=$(BUILD_ARCH)"
+	@echo "USE_AESNI=$(USE_AESNI)"
+	@echo "FLAGS=$(FLAGS)"
+
 all: Meteor.out ## Just compile the code
 
 Meteor.out: $(OBJ_FILES)
-	g++ $(FLAGS) -o $@ $(OBJ_FILES) $(BMR_INCLUDES) $(LIBS)
+	$(CXX) $(FLAGS) -o $@ $(OBJ_FILES) $(BMR_INCLUDES) $(LIBS)
 
 %.o: %.cpp $(HEADER_FILES)
 	$(CXX) $(FLAGS) -c $< -o $@ $(OBJ_INCLUDES)
@@ -81,9 +129,9 @@ valg: Meteor.out ## Run this to execute (only) Party 0 using valgrind. Change FL
 	valgrind --tool=memcheck --leak-check=full --track-origins=yes --dsymutil=yes ./Meteor.out 0 files/IP_$(RUN_TYPE) files/keyA files/keyAB files/keyAC
 
 command: Meteor.out ## Run this to use the run parameters specified in the makefile. 
-	./Meteor.out 2 files/IP_$(RUN_TYPE) files/keyC files/keyAC files/keyBC $(NETWORK) $(DATASET) $(SECURITY) >>P2.txt &
-	./Meteor.out 1 files/IP_$(RUN_TYPE) files/keyB files/keyBC files/keyAB $(NETWORK) $(DATASET) $(SECURITY) >>P1.txt &
-	./Meteor.out 0 files/IP_$(RUN_TYPE) files/keyA files/keyAB files/keyAC $(NETWORK) $(DATASET) $(SECURITY) >>Meteor_P0.txt
+	METEOR_PORT_BASE=$(PORT_BASE) ./Meteor.out 2 files/IP_$(RUN_TYPE) files/keyC files/keyAC files/keyBC $(RUN_MODE) $(NETWORK) $(DATASET) $(UNIT_TEST) >>P2.txt &
+	METEOR_PORT_BASE=$(PORT_BASE) ./Meteor.out 1 files/IP_$(RUN_TYPE) files/keyB files/keyBC files/keyAB $(RUN_MODE) $(NETWORK) $(DATASET) $(UNIT_TEST) >>P1.txt &
+	METEOR_PORT_BASE=$(PORT_BASE) ./Meteor.out 0 files/IP_$(RUN_TYPE) files/keyA files/keyAB files/keyAC $(RUN_MODE) $(NETWORK) $(DATASET) $(UNIT_TEST) >>Meteor_P0.txt
 	@echo "Execution completed"
 
 
@@ -99,4 +147,3 @@ two: Meteor.out ## Run this to only execute Party 2 (useful for multiple termina
 #########################################################################################
 
 .PHONY: help
-

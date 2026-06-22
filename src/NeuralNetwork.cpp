@@ -8,12 +8,25 @@
 #include "BNLayer.h"
 #include "NeuralNetwork.h"
 #include "Functionalities.h"
+#include <limits>
 using namespace std;
 
 extern size_t INPUT_SIZE;
 extern size_t LAST_LAYER_SIZE;
 extern bool WITH_NORMALIZATION;
 extern bool LARGE_NETWORK;
+
+namespace
+{
+	int64_t toSigned(myType value)
+	{
+		if (getMSB(value) == 0)
+			return static_cast<int64_t>(value);
+		if (value == LARGEST_NEG)
+			return std::numeric_limits<int64_t>::min();
+		return -static_cast<int64_t>((~value) + 1);
+	}
+}
 
 NeuralNetwork::NeuralNetwork(NeuralNetConfig* config)
 :inputData(INPUT_SIZE * MINI_BATCH_SIZE),
@@ -74,7 +87,7 @@ void NeuralNetwork::forward()
 		if (LARGE_NETWORK)
 			cout << "Forward \t" << layers[i]->layerNum << " completed..." << endl;
 
-		// print_vector((*layers[i]->getActivation()), "FLOAT", "Activation Layer"+to_string(i), 
+		// print_vector((*layers[i]->getActivation()), "FLOAT", "Activation Layer"+to_string(i),
 		// 			(*layers[i]->getActivation()).size());
 
 		// print_vector((*layers[i]->getActivation()), "FLOAT", "Activation Layer "+to_string(i), 100);
@@ -106,7 +119,7 @@ void NeuralNetwork::computeDelta()
 
 		for (size_t i = 0; i < rows; ++i)
 			for (size_t j = 0; j < columns; ++j)
-				rowSum[i*columns] = rowSum[i*columns] + 
+				rowSum[i*columns] = rowSum[i*columns] +
 									(*(layers[NUM_LAYERS-1]->getActivation()))[i * columns + j];
 
 		for (size_t i = 0; i < rows; ++i)
@@ -129,7 +142,7 @@ void NeuralNetwork::computeDelta()
 			for (size_t j = 0; j < columns; ++j)
 			{
 				index = i * columns + j;
-				(*(layers[NUM_LAYERS-1]->getDelta()))[index] = 
+				(*(layers[NUM_LAYERS-1]->getDelta()))[index] =
 				(*(layers[NUM_LAYERS-1]->getActivation()))[index] - outputData[index];
 			}
 	}
@@ -167,10 +180,39 @@ void NeuralNetwork::predict(RSSVectorMyType &maxIndex)
 
 	size_t rows = MINI_BATCH_SIZE;
 	size_t columns = LAST_LAYER_SIZE;
-	RSSVectorMyType max(rows);
-	RSSVectorSmallType maxPrime(rows*columns);
+	assert(maxIndex.size() == rows && "maxIndex size mismatch");
 
-	//funcMaxpool(*(layers[NUM_LAYERS-1]->getActivation()), max, rows, columns);
+	MEVectorType &activations = *(layers[NUM_LAYERS-1]->getActivation());
+	assert(activations.size() == rows*columns && "final activation size mismatch");
+
+	RSSVectorMyType activationMask(rows*columns);
+	vector<myType> activationMaskPlain(rows*columns), opened(rows*columns);
+	for (size_t i = 0; i < rows*columns; ++i)
+		activationMask[i] = activations[i].second;
+
+	funcReconstruct(activationMask, activationMaskPlain, rows*columns, "prediction logits mask", false);
+
+	for (size_t i = 0; i < rows; ++i)
+	{
+		size_t best = 0;
+		myType firstValue = activations[i*columns].first + activationMaskPlain[i*columns];
+		int64_t bestValue = toSigned(firstValue);
+		opened[i*columns] = firstValue;
+
+		for (size_t j = 1; j < columns; ++j)
+		{
+			size_t index = i*columns + j;
+			opened[index] = activations[index].first + activationMaskPlain[index];
+			int64_t candidate = toSigned(opened[index]);
+			if (candidate > bestValue)
+			{
+				bestValue = candidate;
+				best = j;
+			}
+		}
+
+		maxIndex[i] = make_pair(static_cast<myType>(best), myType(0));
+	}
 }
 
 void NeuralNetwork::getAccuracy(const RSSVectorMyType &maxIndex, vector<size_t> &counter)
@@ -179,36 +221,40 @@ void NeuralNetwork::getAccuracy(const RSSVectorMyType &maxIndex, vector<size_t> 
 
 	size_t rows = MINI_BATCH_SIZE;
 	size_t columns = LAST_LAYER_SIZE;
-	RSSVectorMyType max(rows);
-	RSSVectorSmallType maxPrime(rows*columns);
+	assert(maxIndex.size() == rows && "maxIndex size mismatch for accuracy");
+	assert(outputData.size() == rows*columns && "outputData size mismatch for accuracy");
+	assert(counter.size() >= 2 && "accuracy counter must have two entries");
 
-	//Needed maxIndex here
-	//funcMaxpool(outputData, max, rows, columns);
+	RSSVectorMyType labelMask(rows*columns);
+	vector<myType> labelMaskPlain(rows*columns);
+	for (size_t i = 0; i < rows*columns; ++i)
+		labelMask[i] = outputData[i].second;
 
-	//Reconstruct things
-/******************************** TODO ****************************************/
-	RSSVectorMyType temp_max(rows), temp_groundTruth(rows);
-	// if (partyNum == PARTY_B)
-	// 	sendTwoVectors<RSSMyType>(max, groundTruth, PARTY_A, rows, rows);
-
-	// if (partyNum == PARTY_A)
-	// {
-	// 	receiveTwoVectors<RSSMyType>(temp_max, temp_groundTruth, PARTY_B, rows, rows);
-	// 	addVectors<RSSMyType>(temp_max, max, temp_max, rows);
-//		dividePlain(temp_max, (1 << FLOAT_PRECISION));
-	// 	addVectors<RSSMyType>(temp_groundTruth, groundTruth, temp_groundTruth, rows);	
-	// }
-/******************************** TODO ****************************************/
+	funcReconstruct(labelMask, labelMaskPlain, rows*columns, "ground-truth label mask", false);
 
 	for (size_t i = 0; i < MINI_BATCH_SIZE; ++i)
 	{
+		size_t predicted = static_cast<size_t>(maxIndex[i].first);
+		size_t groundTruth = 0;
+		myType firstValue = outputData[i*columns].first + labelMaskPlain[i*columns];
+		int64_t bestLabel = toSigned(firstValue);
+		for (size_t j = 1; j < columns; ++j)
+		{
+			size_t index = i*columns + j;
+			myType openedLabel = outputData[index].first + labelMaskPlain[index];
+			int64_t candidate = toSigned(openedLabel);
+			if (candidate > bestLabel)
+			{
+				bestLabel = candidate;
+				groundTruth = j;
+			}
+		}
+
 		counter[1]++;
-		if (temp_max[i] == temp_groundTruth[i])
+		if (predicted == groundTruth)
 			counter[0]++;
 	}		
 
-	cout << "Rolling accuracy: " << counter[0] << " out of " 
+	cout << "Rolling accuracy: " << counter[0] << " out of "
 		 << counter[1] << " (" << (counter[0]*100/counter[1]) << " %)" << endl;
 }
-
-

@@ -2,9 +2,9 @@
  * basicSockets.cpp
  *
  *  Created on: Aug 3, 2015
- *      Author: froike(Roi Inbar) 
+ *      Author: froike(Roi Inbar)
  * 	Modified: Aner Ben-Efraim
- * 
+ *
  */
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include "basicSockets.h"
@@ -27,9 +27,16 @@ using namespace std;
 	#include <sys/socket.h>
 	#include <netinet/in.h>
 	#include <netdb.h>
-	#define Sockwrite(sock, data, size) write(sock, data, size) 
+	#define Sockwrite(sock, data, size) write(sock, data, size)
 	#define Sockread(sock, buff, bufferSize) read(sock, buff, bufferSize)
 	//#define socklen_t int
+#elif defined(__APPLE__) || defined(__unix__)
+	#include <unistd.h>
+	#include <sys/socket.h>
+	#include <netinet/in.h>
+	#include <netdb.h>
+	#define Sockwrite(sock, data, size) write(sock, data, size)
+	#define Sockread(sock, buff, bufferSize) read(sock, buff, bufferSize)
 #elif _WIN32
 	//#pragma comment (lib, "ws2_32.lib") //Winsock Library
 	#pragma comment (lib, "Ws2_32.lib")
@@ -41,7 +48,7 @@ using namespace std;
 	#define close closesocket
 	#define Sockwrite(sock, data, size) send(sock, (char*)data, size, 0)
 	#define Sockread(sock, buff, bufferSize) recv(sock, (char*)buff, bufferSize, 0)
-	
+
 #endif
 
 /*GLOBAL VARIABLES - LIST OF IP ADDRESSES*/
@@ -53,7 +60,7 @@ CommunicationObject commObject;
 
 
 
-std::string exec(const char* cmd) 
+std::string exec(const char* cmd)
 {
     std::array<char, 128> buffer;
     std::string result;
@@ -69,7 +76,7 @@ std::string exec(const char* cmd)
 string getPublicIp()
 {
 	string s = exec("dig TXT +short o-o.myaddr.l.google.com @ns1.google.com");
-    s = s.substr(1, s.length()-3); 
+    s = s.substr(1, s.length()-3);
     return s;
 }
 
@@ -100,7 +107,7 @@ char** getIPAddresses(const int domain)
   numberOfAddresses = ifs+1;
   ans = new char*[ifs+1];
 
-  string ip = getPublicIp(); 
+  string ip = getPublicIp();
   ans[0] = new char[ip.length()+1];
   strcpy(ans[0], ip.c_str());
   ans[0][ip.length()] = '\0';
@@ -135,16 +142,18 @@ int getPartyNum(char* filename)
 	int player = 0;
 	//for (int i = 0; i < numberOfAddresses; i++)
 	//	cout << localIPaddrs[i] << endl;
-	while (true)
+	while (fgets(buff, STRING_BUFFER_SIZE, f) != NULL)
 	{
-		fgets(buff, STRING_BUFFER_SIZE, f);
-		sscanf(buff, "%s\n", ip);
+		if (sscanf(buff, "%s\n", ip) != 1)
+			continue;
+
 		for (int i = 0; i < numberOfAddresses; i++)
 			if (strcmp(localIPaddrs[i], ip) == 0 || strcmp("127.0.0.1", ip)==0)
 				return player;
 		player++;
 	}
 	fclose(f);
+	return -1;
 
 }
 
@@ -206,17 +215,17 @@ bool BmrNet::listenNow(){
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = INADDR_ANY;
 	serv_addr.sin_port = htons(this->port);
-	
+
 	int yes=1;
-	
-	if (setsockopt(serverSockFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) 
+
+	if (setsockopt(serverSockFd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
 	{
 		perror("setsockopt");
 		exit(1);
 	}
-	
+
 	int testCounter=0;//
-	while (bind(serverSockFd, (struct sockaddr *) &serv_addr,
+	while (::bind(serverSockFd, (struct sockaddr *) &serv_addr,
 			sizeof(serv_addr)) < 0 && testCounter<10){
 		cout<<"ERROR on binding: "<< port <<endl;
 		cout<<"Count: "<< testCounter<<endl;///
@@ -227,7 +236,7 @@ bool BmrNet::listenNow(){
 	if (testCounter==10) return false;//
 	///
 	listen(serverSockFd, 10);
-	
+
 	for (int conn = 0; conn < NUMCONNECTIONS; conn++)
 	{
 		clilen = sizeof(cli_addr[conn]);
@@ -239,7 +248,7 @@ bool BmrNet::listenNow(){
 			cout<<"ERROR on accept"<<endl;
 			return false;
 		}
-	//use TCP_NODELAY on the socket 
+	//use TCP_NODELAY on the socket
 		int flag = 1;
 		int result = setsockopt(this->socketFd[conn],            /* socket affected */
 	                          IPPROTO_TCP,     /* set option at TCP level */
@@ -271,38 +280,46 @@ bool BmrNet::connectNow(){
 	for (int conn = 0; conn < NUMCONNECTIONS; conn++)
 	{
 		//fprintf(stderr,"usage %s hostname port\n", host);
-		socketFd[conn] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-		if (socketFd[conn] < 0){
-			cout << ("ERROR opening socket") << endl;
-			return false;
-		}
+		auto openSocket = [&]() -> bool {
+			socketFd[conn] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+			if (socketFd[conn] < 0){
+				cout << ("ERROR opening socket") << endl;
+				return false;
+			}
 
-		//use TCP_NODELAY on the socket 
-		int flag = 1;
-		int result = setsockopt(socketFd[conn],            /* socket affected */
-	                          IPPROTO_TCP,     /* set option at TCP level */
-	                          TCP_NODELAY,     /* name of option */
-	                          (char *) &flag,  /* the cast is historical */
-	                          sizeof(int));    /* length of option value */
-		if (result < 0) {
-		    cout << "error setting NODELAY. exiting" << endl;
-		    exit (-1);
-	       }
-		
+			//use TCP_NODELAY on the socket
+			int flag = 1;
+			int result = setsockopt(socketFd[conn],            /* socket affected */
+		                          IPPROTO_TCP,     /* set option at TCP level */
+		                          TCP_NODELAY,     /* name of option */
+		                          (char *) &flag,  /* the cast is historical */
+		                          sizeof(int));    /* length of option value */
+			if (result < 0) {
+			    cout << "error setting NODELAY. exiting" << endl;
+			    exit (-1);
+		       }
+			return true;
+		};
+		if (!openSocket())
+			return false;
+
 
 		memset(&serv_addr[conn], 0, sizeof(serv_addr[conn]));
 		serv_addr[conn].sin_family		= AF_INET;
 		serv_addr[conn].sin_addr.s_addr	= inet_addr(host);
-		serv_addr[conn].sin_port			= htons(port); 
-		
+		serv_addr[conn].sin_port			= htons(port);
+
 		int count = 0;
 		//cout << "Trying to connect to server " << endl; cout << "IP: " << host << "port " << port << endl;
-		while (connect(socketFd[conn], (struct sockaddr *) &serv_addr[conn], sizeof(serv_addr[conn])) < 0)
+		while (::connect(socketFd[conn], (struct sockaddr *) &serv_addr[conn], sizeof(serv_addr[conn])) < 0)
 		{
 				count++;
 				if (count % 50 == 0)
 				    cout << "Not managing to connect. " << "Count=" << count << endl;
+				close(socketFd[conn]);
 				sleep(1);
+				if (!openSocket())
+					return false;
 		}
 
 		//printf("Connected! %d \n",count);

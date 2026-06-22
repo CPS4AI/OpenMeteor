@@ -65,6 +65,13 @@ typedef std::vector<METype> MEVectorType;
 typedef std::pair<smallType, RSSSmallType> MESmallType;
 typedef std::vector<MESmallType> MEVectorSmallType;
 
+enum MeasurementPhase
+{
+	ONLINE_PHASE = 0,
+	PREPROCESSING_PHASE = 1,
+	NUM_MEASUREMENT_PHASES = 2
+};
+
 const int BIT_SIZE = (sizeof(myType) * CHAR_BIT);
 const myType LARGEST_NEG = ((myType)1 << (BIT_SIZE - 1));
 const myType MINUS_ONE = (myType)-1;
